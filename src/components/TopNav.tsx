@@ -26,7 +26,7 @@ export function TopNav({ activeRoute, onNavigate }: TopNavProps) {
           onClick={() => onNavigate('studio')}
           className="text-lg font-semibold tracking-tight text-neutral-900 dark:text-white whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-blue-700"
         >
-          SignBridge
+          Clon
         </button>
 
         <nav className="hidden md:flex items-center gap-7" aria-label="Primary Navigation">

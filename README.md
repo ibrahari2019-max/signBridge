@@ -1,4 +1,4 @@
-# SignBridge NSL — English to Nigerian Sign Language Translation Studio
+# Clon NSL — English to Nigerian Sign Language Translation Studio
 
 Real-time spoken English to Nigerian Sign Language (NSL) communication platform featuring streaming speech recognition, contextual NSL linguistic translation, and an articulated 54-bone 3D human avatar rendered with Three.js.
 

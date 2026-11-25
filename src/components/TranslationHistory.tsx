@@ -83,7 +83,7 @@ export function TranslationHistory({
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `signbridge-history-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `clon-history-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
   };

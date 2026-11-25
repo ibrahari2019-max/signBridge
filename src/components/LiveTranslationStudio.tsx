@@ -129,7 +129,7 @@ export function LiveTranslationStudio({
           (item) => item.type === 'verified_sign' || item.type === 'fingerspell'
         );
         if (instantPlayable && engineRef.current) {
-          engineRef.current.enqueueSequence(instant.signItems, true);
+          engineRef.current.enqueueSequence(instant.signItems, sourceMode !== 'mic');
           setTranslationStatus('signing');
         } else {
           setTranslationStatus('translating');
@@ -161,7 +161,7 @@ export function LiveTranslationStudio({
         );
 
         if (!alreadyStreamed && hasPlayable && engineRef.current) {
-          engineRef.current.enqueueSequence(result.signItems, true);
+          engineRef.current.enqueueSequence(result.signItems, sourceMode !== 'mic');
           setTranslationStatus(result.translationStatus === 'incomplete' ? 'incomplete' : 'signing');
         } else if (!hasPlayable) {
           setTranslationStatus('incomplete');

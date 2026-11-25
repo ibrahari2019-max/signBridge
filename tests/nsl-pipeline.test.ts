@@ -9,7 +9,7 @@ import {
 import { buildLexiconFallbackPlan, translateEnglishToNsl } from '../src/services/nslTranslator.ts';
 
 async function runTests() {
-  console.log('Running SignBridge NSL verification suite...');
+  console.log('Running Clon NSL verification suite...');
 
   // 1. Lexicon integrity & metadata checks
   assert.ok(ALL_NSL_SIGNS.length >= 100, `Expected >= 100 NSL signs, got ${ALL_NSL_SIGNS.length}`);

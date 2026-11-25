@@ -58,6 +58,17 @@ interface WebSpeechRecognitionInstance {
   stop: () => void;
 }
 
+function appendSpeechSegment(existing: string, segment: string): string {
+  const trimmed = segment.trim();
+  if (!trimmed) return existing;
+  if (!existing) return trimmed;
+  if (/^[.,!?;:'")]/.test(trimmed)) return `${existing}${trimmed}`;
+  if (trimmed.toLowerCase().startsWith(existing.toLowerCase())) return trimmed;
+  return `${existing} ${trimmed}`;
+}
+
+const SENTENCE_PAUSE_MS = 1400;
+
 export function useSpeechRecognition(options: SpeechRecognitionHookOptions) {
   const { accent, onFinalPhrase, onInterimPhrase } = options;
   const [micStatus, setMicStatus] = useState<MicStatus>('idle');
@@ -78,6 +89,8 @@ export function useSpeechRecognition(options: SpeechRecognitionHookOptions) {
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const recognitionRef = useRef<WebSpeechRecognitionInstance | null>(null);
   const phraseBufferRef = useRef('');
+  const pendingInterimRef = useRef('');
+  const browserConsumedIndexRef = useRef(0);
   const flushTimerRef = useRef<number | null>(null);
   const fellBackToBrowserRef = useRef(false);
   const lastBrowserResultAtRef = useRef(0);
@@ -88,13 +101,24 @@ export function useSpeechRecognition(options: SpeechRecognitionHookOptions) {
       window.clearTimeout(flushTimerRef.current);
       flushTimerRef.current = null;
     }
-    const text = phraseBufferRef.current.trim();
+    const text = appendSpeechSegment(phraseBufferRef.current, pendingInterimRef.current).trim();
+    phraseBufferRef.current = '';
+    pendingInterimRef.current = '';
     if (text.length > 0) {
-      phraseBufferRef.current = '';
       setInterimText('');
       onFinalRef.current(text);
     }
   }, []);
+
+  const schedulePhraseFlush = useCallback(
+    (delayMs = SENTENCE_PAUSE_MS) => {
+      if (flushTimerRef.current !== null) {
+        window.clearTimeout(flushTimerRef.current);
+      }
+      flushTimerRef.current = window.setTimeout(flushPhraseBuffer, delayMs);
+    },
+    [flushPhraseBuffer]
+  );
 
   const cleanupStreams = useCallback(() => {
     if (flushTimerRef.current !== null) {
@@ -102,6 +126,8 @@ export function useSpeechRecognition(options: SpeechRecognitionHookOptions) {
       flushTimerRef.current = null;
     }
     phraseBufferRef.current = '';
+    pendingInterimRef.current = '';
+    browserConsumedIndexRef.current = 0;
     lastBrowserResultAtRef.current = 0;
     browserBrokenRef.current = false;
 
@@ -158,35 +184,32 @@ export function useSpeechRecognition(options: SpeechRecognitionHookOptions) {
       rec.continuous = true;
       rec.interimResults = true;
       rec.lang = accent;
+      browserConsumedIndexRef.current = 0;
 
       rec.onresult = (event) => {
         if (isPausedRef.current) return;
         lastBrowserResultAtRef.current = Date.now();
-        phraseBufferRef.current = '';
-        if (flushTimerRef.current !== null) {
-          window.clearTimeout(flushTimerRef.current);
-          flushTimerRef.current = null;
-        }
 
         let interim = '';
-        for (let i = event.resultIndex; i < event.results.length; i++) {
+        for (let i = browserConsumedIndexRef.current; i < event.results.length; i++) {
           const res = event.results[i];
           const transcript = res[0].transcript;
           if (res.isFinal) {
-            const cleaned = transcript.trim();
-            if (cleaned) {
-              setInterimText('');
-              onFinalRef.current(cleaned);
-            }
+            phraseBufferRef.current = appendSpeechSegment(phraseBufferRef.current, transcript);
+            browserConsumedIndexRef.current = i + 1;
           } else {
-            interim += transcript;
+            interim = appendSpeechSegment(interim, transcript);
           }
         }
-        if (interim) {
-          const text = interim.trim();
-          setInterimText(text);
-          if (text) onInterimRef.current?.(text);
+
+        pendingInterimRef.current = interim;
+        const combined = appendSpeechSegment(phraseBufferRef.current, interim);
+        if (combined) {
+          setInterimText(combined);
+          onInterimRef.current?.(combined);
         }
+
+        schedulePhraseFlush(SENTENCE_PAUSE_MS);
       };
 
       rec.onerror = (ev) => {
@@ -207,6 +230,12 @@ export function useSpeechRecognition(options: SpeechRecognitionHookOptions) {
 
       rec.onend = () => {
         if (recognitionRef.current === rec && !isPausedRef.current && !browserBrokenRef.current) {
+          // Preserve accumulated phrase across continuous restart while resetting session index
+          if (pendingInterimRef.current) {
+            phraseBufferRef.current = appendSpeechSegment(phraseBufferRef.current, pendingInterimRef.current);
+            pendingInterimRef.current = '';
+          }
+          browserConsumedIndexRef.current = 0;
           try {
             rec.start();
           } catch {
@@ -224,7 +253,7 @@ export function useSpeechRecognition(options: SpeechRecognitionHookOptions) {
         return false;
       }
     },
-    [accent, cleanupStreams]
+    [accent, cleanupStreams, schedulePhraseFlush]
   );
 
   const startBrowserSpeech = useCallback(async () => {
@@ -344,36 +373,31 @@ export function useSpeechRecognition(options: SpeechRecognitionHookOptions) {
           return;
         }
 
-        // Skip duplicate WS events while native SpeechRecognition is actively emitting for this utterance
-        const browserActive =
-          !browserBrokenRef.current &&
-          lastBrowserResultAtRef.current > 0 &&
-          Date.now() - lastBrowserResultAtRef.current < 1800;
-        if (browserActive) return;
+        // Once native SpeechRecognition is proven active and healthy, let it own the stream without WS echoes
+        if (!browserBrokenRef.current && lastBrowserResultAtRef.current > 0) return;
 
         if (msg.type === 'interim' && msg.text) {
           if (!isPausedRef.current) {
-            const interim = msg.text.trim();
-            const fullInterim = phraseBufferRef.current ? `${phraseBufferRef.current} ${interim}` : interim;
-            setInterimText(fullInterim);
-            if (interim) onInterimRef.current?.(fullInterim);
+            pendingInterimRef.current = msg.text.trim();
+            const fullInterim = appendSpeechSegment(phraseBufferRef.current, msg.text);
+            if (fullInterim) {
+              setInterimText(fullInterim);
+              onInterimRef.current?.(fullInterim);
+            }
+            schedulePhraseFlush(SENTENCE_PAUSE_MS);
           }
         } else if (msg.type === 'final' && msg.text) {
           if (!isPausedRef.current) {
-            const segment = msg.text.trim();
-            if (segment) {
-              phraseBufferRef.current = phraseBufferRef.current
-                ? `${phraseBufferRef.current} ${segment}`
-                : segment;
+            const next = appendSpeechSegment(phraseBufferRef.current, msg.text);
+            if (next !== phraseBufferRef.current || msg.text.trim()) {
+              phraseBufferRef.current = next;
+              pendingInterimRef.current = '';
               setInterimText(phraseBufferRef.current);
               onInterimRef.current?.(phraseBufferRef.current);
 
-              if (/[.!?]$/.test(segment)) {
-                flushPhraseBuffer();
-              } else {
-                if (flushTimerRef.current !== null) window.clearTimeout(flushTimerRef.current);
-                flushTimerRef.current = window.setTimeout(flushPhraseBuffer, 300);
-              }
+              const wordCount = phraseBufferRef.current.split(/\s+/).filter(Boolean).length;
+              const isFullSentenceStop = wordCount >= 3 && /[.!?]$/.test(phraseBufferRef.current);
+              schedulePhraseFlush(isFullSentenceStop ? 950 : SENTENCE_PAUSE_MS);
             }
           }
         }
@@ -415,7 +439,7 @@ export function useSpeechRecognition(options: SpeechRecognitionHookOptions) {
     };
 
     setMicStatus('listening');
-  }, [attachNativeSpeechRecognizer, cleanupStreams, flushPhraseBuffer, startBrowserSpeech]);
+  }, [attachNativeSpeechRecognizer, cleanupStreams, schedulePhraseFlush, startBrowserSpeech]);
 
   const startListening = useCallback(async () => {
     setErrorMsg(null);
@@ -441,6 +465,7 @@ export function useSpeechRecognition(options: SpeechRecognitionHookOptions) {
 
   const resumeListening = useCallback(() => {
     isPausedRef.current = false;
+    browserConsumedIndexRef.current = 0;
     if (recognitionRef.current && !browserBrokenRef.current) {
       try {
         recognitionRef.current.start();

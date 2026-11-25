@@ -39,7 +39,7 @@ function extractCleanErrorMessage(error: unknown, fallback: string): string {
 
 // Health endpoint
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', service: 'signbridge-nsl', timestamp: new Date().toISOString() });
+  res.json({ status: 'ok', service: 'clon-nsl', timestamp: new Date().toISOString() });
 });
 
 // Public read-only NSL verified vocabulary & test benchmark catalog
@@ -437,7 +437,7 @@ async function startServer() {
   }
 
   httpServer.listen(PORT, '0.0.0.0', () => {
-    console.log(`SignBridge NSL server running on http://0.0.0.0:${PORT}`);
+    console.log(`Clon NSL server running on http://0.0.0.0:${PORT}`);
   });
 }
 
